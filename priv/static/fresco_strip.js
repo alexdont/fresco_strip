@@ -392,6 +392,55 @@
       }
     }
 
+    // Scroll the strip so a specific point on a specific image,
+    // expressed in that image's source-pixel coordinate system,
+    // sits at the chosen viewport alignment. This is the high-
+    // level companion to `scrollTo({imageIdx, y})`, which takes a
+    // pre-translated display-pixel offset and forces callers to
+    // do the source-px -> render-px math themselves.
+    //
+    // Consumers that already hold source-pixel coords (Etcher's
+    // `shape.geometry`, ML detection boxes, server-side annotation
+    // payloads) can call this directly without owning the rendered
+    // height of each image. The handle owns the imageEl + sources
+    // map, so the conversion stays in one place.
+    //
+    // Options:
+    //   imageIdx: <number>           required
+    //   srcX:     <source-px number> optional, currently unused — kept
+    //                                for forward compat (horizontal
+    //                                scroll mode); strip is vertical
+    //                                so X is ignored today.
+    //   srcY:     <source-px number> required
+    //   align:    "center" | "top" | "bottom"   default "center"
+    //   behavior: "smooth" | "instant"          default "smooth"
+    function scrollToImagePoint(payload) {
+      payload = payload || {};
+      var idx = typeof payload.imageIdx === "number" ? payload.imageIdx : 0;
+      var srcY = typeof payload.srcY === "number" ? payload.srcY : 0;
+      var align = (payload.align === "top" || payload.align === "bottom") ?
+        payload.align : "center";
+      var behavior = payload.behavior === "instant" ? "instant" : "smooth";
+      var img = imgAt(idx);
+      if (!img) return;
+      var src = sources[idx] || {};
+      var srcH = src.height || img.naturalHeight || 0;
+      var renderedH = img.offsetHeight || 0;
+      var scale = srcH > 0 ? renderedH / srcH : 1;
+      var displayY = srcY * scale;
+      var viewportH = container ? container.clientHeight : 0;
+      var yOffset;
+      if (align === "top") {
+        yOffset = displayY;
+      } else if (align === "bottom") {
+        yOffset = displayY - viewportH;
+      } else {
+        yOffset = displayY - viewportH / 2;
+      }
+      if (yOffset < 0) yOffset = 0;
+      scrollTo({ imageIdx: idx, y: yOffset, behavior: behavior });
+    }
+
     function scrollBy(payload) {
       payload = payload || {};
       var dy = typeof payload.dy === "number" ? payload.dy : 0;
@@ -487,6 +536,7 @@
       container: container,
 
       scrollTo: scrollTo,
+      scrollToImagePoint: scrollToImagePoint,
       scrollBy: scrollBy,
       imageToScreen: imageToScreen,
       screenToImage: screenToImage,

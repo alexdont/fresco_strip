@@ -44,6 +44,16 @@ defmodule FrescoStrip.Viewer do
       window.Fresco.onReady("reader", function (handle) {
         handle.scrollTo({imageIdx: 3, y: 0, behavior: "smooth"});
         handle.scrollBy({dy: 500, behavior: "instant"});
+
+        // Source-pixel reveal — converts srcY (the image's own
+        // natural-pixel space, the same units Etcher's shape
+        // `geometry` uses) into a display-pixel scroll offset.
+        // Prefer this over `scrollTo` for any caller that holds
+        // source-pixel coords; the handle owns the per-image
+        // rendered-vs-natural ratio.
+        handle.scrollToImagePoint({
+          imageIdx: 3, srcY: 920, align: "center", behavior: "smooth"
+        });
         handle.getScrollState(); // { scrollTop, scrollHeight, viewportH, currentImageIdx, fractionWithin }
 
         handle.on("viewport-change", function (e) {
@@ -57,6 +67,19 @@ defmodule FrescoStrip.Viewer do
 
   Feature-detect the strip vs viewer/canvas handles via
   `"scrollTo" in handle`.
+
+  ## Coordinate space
+
+  Every position the strip handle accepts or reports is in
+  **source-pixel space** — each image's own natural-pixel grid (a
+  720×9200 page uses `0..720` / `0..9200`). `scrollToImagePoint`,
+  Etcher's stored `shape.geometry`, and any peer-library overlay
+  positioned against `handle.getImages()[i]` should all be authored
+  in source pixels. The display-pixel translation happens inside
+  the handle. (`scrollTo({imageIdx, y})` is the low-level escape
+  hatch — it takes a pre-translated display-pixel offset; reach for
+  `scrollToImagePoint` first.) Source-pixel coords stay valid
+  across strip width changes; display-pixel ones don't.
 
   ## Server-pushed scrolling
 
