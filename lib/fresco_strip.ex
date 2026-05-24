@@ -8,6 +8,20 @@ defmodule FrescoStrip do
   paged layouts, reach for `Fresco.viewer` / `Fresco.canvas` from the
   `fresco` package instead.
 
+  ## Annotations out of the box
+
+  [Etcher](https://hex.pm/packages/etcher) (>= 0.4.12) draws shapes
+  on each page of a strip with the same UX surface as canvas mode —
+  per-page SVG overlays, hit-testing scoped to the right page,
+  hover tooltips, undo / redo, color picker, multi-select. Drop in
+  `<Etcher.layer fresco_id="reader" />` alongside the strip and the
+  annotation toolbar appears. Etcher detects the strip handle at
+  runtime via `"scrollTo" in handle` — no per-package configuration.
+  Shapes get an extra `image_idx` field identifying which page they
+  live on; the `etcher:annotations-changed` payload round-trips
+  through the strip's `:extensions` map (see "Attaching annotation
+  tools" in `FrescoStrip.viewer`).
+
   ## Why a separate package?
 
   Strip mode used to ship inside `fresco` as `Fresco.scroll_strip`. It

@@ -1,8 +1,8 @@
 defmodule FrescoStrip.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
-  @description "Vertical-image-strip scroll companion to Fresco — for manhwa / long-form / scrolling-feed readers. Native browser scroll, memory windowing, peer-extension contract; no pan/zoom engine. Ships separately from `fresco` so consumers who only need the viewer / canvas stay lightweight."
+  @version "0.1.1"
+  @description "Vertical-image-strip scroll companion to Fresco — manhwa, long-form comics, scrolling-feed readers. Native browser scroll, memory windowing, per-image extension overlays. Annotation-ready: Etcher (>= 0.4.12) draws shapes on each page out of the box via the shared `window.Fresco` registry."
   @source_url "https://github.com/alexdont/fresco_strip"
 
   def project do
