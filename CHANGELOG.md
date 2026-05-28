@@ -4,6 +4,55 @@ All notable changes to FrescoStrip are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1 — 2026-05-28
+
+### Fixed
+
+- **Pages appended to the strip container after mount were invisible
+  to the coordinate helpers.** Internal `sources` was captured once
+  from `data-sources` at mount and never extended, and `screenToImage`
+  iterated `for (i = 0; i < sources.length; i++)` — so taps on pages
+  added by multi-chapter infinite-scroll readers all collapsed onto
+  the fallback `{imageIdx: sources.length - 1, x: 0, y: 0}` (the last
+  *original* page at its origin). `screenToImage` now iterates the
+  live `[data-fresco-strip-img]` set in the DOM and snaps the
+  out-of-range fallback to the highest idx actually present, so
+  appended pages route correctly even before `appendSources` is
+  called. Pairs with `etcher 0.5.3`'s `layer.refreshPages()` to fix
+  drawing + `addShape` on appended chapters end-to-end.
+- **`imageToScreen` and `screenToImage` scale fallback.** When
+  `sources[idx].width` was missing (an appended page, or a spec
+  shipped without dimensions), the scale silently fell through to
+  `1`, which is correct only for source-pixel == screen-pixel
+  images. Both helpers now consult `img.naturalWidth` as a secondary
+  fallback before degrading to `scale = 1`, so once the bitmap loads
+  the coords come out right even without `appendSources`.
+
+### Added
+
+- **`handle.appendSources([{url, width, height}, ...])`** — extend the
+  internal sources at runtime. Sequential append: the Nth spec lands
+  at index `sources.length` (before push), matching the natural
+  pattern of consumers appending `<img data-image-idx="…">` elements
+  to the container. `width`/`height` are in source-pixel space and
+  feed `screenToImage` / `imageToScreen` for accurate routing before
+  the appended bitmaps finish loading. Emits a `sources-changed`
+  event so the host hook can pick up the new imgs for memory
+  windowing, dominant-image tracking, and the `image-loaded` re-emit
+  (with a synthetic `image-loaded` for imgs that were already
+  complete when the listener attached, e.g. cached).
+
+  Consumer flow:
+
+  ```js
+  fetch(chapterUrl).then(function(resp) { return resp.json(); })
+    .then(function(specs) {
+      specs.forEach(appendImgToContainer);   // your DOM glue
+      handle.appendSources(specs);            // teach the helpers
+      layer.refreshPages();                   // etcher 0.5.3
+    });
+  ```
+
 ## 0.2.0 — 2026-05-24
 
 Deep-linking companion release to `etcher 0.5.0`. Adds a high-level

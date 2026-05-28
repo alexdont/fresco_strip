@@ -452,13 +452,28 @@
       }
     }
 
+    // Resolve a page's source-pixel width for scale calculations.
+    // Order: explicit `sources[idx].width` (mount-time data-sources or
+    // runtime `appendSources`), then `img.naturalWidth` (available once
+    // the bitmap has loaded), then the rendered width (scale = 1, last
+    // resort — coords will be wrong but the helper won't throw). The
+    // naturalWidth fallback covers the gap where a consumer has
+    // appended `<img>`s to the container but hasn't called
+    // `appendSources` yet, or shipped specs with missing dimensions.
+    function srcWidthFor(idx, img, rect) {
+      if (sources[idx] && sources[idx].width) return sources[idx].width;
+      if (img && img.naturalWidth) return img.naturalWidth;
+      return rect.width;
+    }
+
     function imageToScreen(pt) {
       pt = pt || {};
       var idx = typeof pt.imageIdx === "number" ? pt.imageIdx : 0;
       var img = imgAt(idx);
       if (!img) return { x: 0, y: 0 };
       var rect = img.getBoundingClientRect();
-      var scale = rect.width / (sources[idx] && sources[idx].width ? sources[idx].width : rect.width);
+      var srcW = srcWidthFor(idx, img, rect);
+      var scale = rect.width / srcW;
       return {
         x: rect.left + (pt.x || 0) * scale,
         y: rect.top + (pt.y || 0) * scale
@@ -469,12 +484,24 @@
       pt = pt || {};
       var px = typeof pt.x === "number" ? pt.x : 0;
       var py = typeof pt.y === "number" ? pt.y : 0;
-      for (var i = 0; i < sources.length; i++) {
-        var img = imgAt(i);
-        if (!img) continue;
+      // DOM-driven iteration so taps on pages appended after mount —
+      // multi-chapter infinite-scroll readers — route to the correct
+      // image. Bounding `for (i < sources.length)` (the previous form)
+      // stopped before appended pages and dropped their taps onto the
+      // last original page at (0, 0).
+      var imgs = container
+        ? container.querySelectorAll("[data-fresco-strip-img]")
+        : [];
+      var lastIdx = -1;
+      for (var n = 0; n < imgs.length; n++) {
+        var img = imgs[n];
+        var i = parseInt(img.dataset.imageIdx, 10);
+        if (isNaN(i)) continue;
+        if (i > lastIdx) lastIdx = i;
         var rect = img.getBoundingClientRect();
         if (py >= rect.top && py <= rect.bottom) {
-          var scale = (sources[i] && sources[i].width) ? sources[i].width / rect.width : 1;
+          var srcW = srcWidthFor(i, img, rect);
+          var scale = srcW / rect.width;
           return {
             imageIdx: i,
             x: (px - rect.left) * scale,
@@ -482,7 +509,16 @@
           };
         }
       }
-      return { imageIdx: py < 0 ? 0 : sources.length - 1, x: 0, y: 0 };
+      // Above the first page → snap to idx 0; below the last → snap to
+      // the highest idx we saw in the DOM (which now includes appended
+      // pages), falling back to the captured sources length when the
+      // container is empty.
+      if (py < 0) return { imageIdx: 0, x: 0, y: 0 };
+      return {
+        imageIdx: lastIdx >= 0 ? lastIdx : Math.max(0, sources.length - 1),
+        x: 0,
+        y: 0
+      };
     }
 
     function getScrollState() {
@@ -504,6 +540,55 @@
         var parsed = JSON.parse(raw);
         return parsed && parsed[name];
       } catch (_) { return undefined; }
+    }
+
+    // Extend the internal `sources` array at runtime — multi-chapter
+    // infinite-scroll readers fetching the next chapter's images on
+    // demand. Sequential append: the Nth spec lands at index
+    // `sources.length` (before the push), matching the natural pattern
+    // of consumers appending `<img data-image-idx="…">` elements to
+    // the container.
+    //
+    // Specs are `{ url, width, height }` — same shape the `:sources`
+    // attr / `data-sources` JSON ship at mount. `width`/`height` are
+    // in source-pixel space (used for screenToImage / imageToScreen
+    // scale before the bitmap has loaded). Missing dimensions are
+    // tolerated — the coord helpers fall back to `img.naturalWidth`
+    // once the appended `<img>` finishes loading.
+    //
+    // Emits `sources-changed` so the host hook can pick up the new
+    // imgs in its memory-windowing / load-listener bookkeeping. Pairs
+    // with `etcher 0.5.3`'s `layer.refreshPages()` — consumer flow is:
+    //   1. fetch chapter N+1 specs from server
+    //   2. append `<img data-image-idx="…">` elements to the container
+    //   3. `handle.appendSources(specs)` so coord helpers + windowing
+    //      know about the new pages
+    //   4. `layer.refreshPages()` so Etcher builds overlays for them
+    function appendSources(specs) {
+      if (!Array.isArray(specs)) {
+        if (typeof console !== "undefined" && console.warn) {
+          console.warn(
+            "[FrescoStrip] appendSources: expected an array of " +
+            "`{url, width, height}` specs, got",
+            specs
+          );
+        }
+        return;
+      }
+      var added = 0;
+      for (var i = 0; i < specs.length; i++) {
+        var s = specs[i];
+        if (!s || typeof s !== "object") continue;
+        sources.push({
+          url: typeof s.url === "string" ? s.url : "",
+          width: typeof s.width === "number" ? s.width : 0,
+          height: typeof s.height === "number" ? s.height : 0
+        });
+        added++;
+      }
+      if (added > 0) {
+        bus._emit("sources-changed", { count: sources.length, added: added });
+      }
     }
 
     function getImages() {
@@ -543,6 +628,7 @@
       getScrollState: getScrollState,
       getExtension: getExtension,
       getImages: getImages,
+      appendSources: appendSources,
 
       // Strip is vertical-scroll-only by design — rotating it would
       // break the reader UX — so these are documented no-ops that
@@ -662,6 +748,39 @@
       }
       allImgs.forEach(function(img) {
         img.addEventListener("load", onImgLoad);
+      });
+
+      // Track which `<img>`s already carry a `load` listener so a
+      // `sources-changed` re-scan can be cheap and idempotent.
+      var trackedImgs = new WeakSet ? new WeakSet() : null;
+      if (trackedImgs) {
+        allImgs.forEach(function(img) { trackedImgs.add(img); });
+      }
+
+      // When the consumer extends the source set via
+      // `handle.appendSources(...)`, the imgs they appended to the
+      // container start invisible to memory-windowing, dominant-image
+      // tracking, and the `image-loaded` re-emit — `allImgs` was a
+      // mount-time snapshot. Re-scan the DOM and pick up the new ones
+      // here. Imgs already complete by the time we attach the listener
+      // (cached, or src set before the append) get a synthetic
+      // `image-loaded` so Etcher's overlay viewBox snaps to the
+      // correct natural dimensions immediately.
+      handle.on("sources-changed", function() {
+        if (!container) return;
+        var current = container.querySelectorAll("[data-fresco-strip-img]");
+        for (var i = 0; i < current.length; i++) {
+          var img = current[i];
+          if (trackedImgs && trackedImgs.has(img)) continue;
+          if (!trackedImgs && allImgs.indexOf(img) !== -1) continue;
+          allImgs.push(img);
+          if (trackedImgs) trackedImgs.add(img);
+          img.addEventListener("load", onImgLoad);
+          if (img.complete && img.naturalWidth > 0) {
+            var idx = parseInt(img.dataset.imageIdx, 10);
+            if (!isNaN(idx)) handle._emit("image-loaded", { imageIdx: idx });
+          }
+        }
       });
 
       // ---- Scroll bridge ----------------------------------------------------
